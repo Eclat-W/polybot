@@ -22,6 +22,8 @@
 
 Trade smarter on **Polymarket**, **Kalshi**, and other prediction markets with 10 battle-tested strategies, real-time analytics, and a plugin system for your own AI models.
 
+> **New: AI Agent Integration** - PolyBot now includes an MCP server for AI agents, a Claude Code skill (`/polybot`), and strategy assessment tools. Let AI analyze your strategies and execute trades with full safety controls.
+
 ## Why PolyBot?
 
 | Feature | PolyBot | Others |
@@ -29,6 +31,8 @@ Trade smarter on **Polymarket**, **Kalshi**, and other prediction markets with 1
 | **Strategies** | 10 built-in | 1-3 typically |
 | **Multi-Venue** | Polymarket, Kalshi, Binance | Single venue |
 | **AI Integration** | Plugin system for any model | Hardcoded or none |
+| **MCP Server** | Full AI agent integration | None |
+| **Claude Code Skill** | `/polybot` commands | None |
 | **Dashboard** | Vue.js real-time UI | Terminal or none |
 | **License** | MIT | Often GPL or closed |
 
@@ -308,11 +312,28 @@ polybot auth               # Manage API credentials
 
 | Feature | PolyBot | Fully-Autonomous AI Bot | OctoBot Prediction | Poly-Maker |
 |---------|---------|-------------------------|-------------------|------------|
-| Strategies | 10 | AI-only | Copy + Arb | Market Making |
-| Multi-venue | Yes | No | No | No |
-| Dashboard | Vue.js | Terminal | OctoBot UI | Google Sheets |
+| Strategies | 10 built-in | AI-only | Copy + Arb | Market Making |
+| Multi-venue | Yes (3 venues) | No | No | No |
+| Dashboard | Vue.js real-time | Terminal only | OctoBot UI | Google Sheets |
 | AI plugins | Any model | GPT-4/Claude/Gemini | Via OctoBot | None |
+| **MCP Server** | **Yes - Full integration** | No | No | No |
+| **Claude Code Skill** | **Yes - /polybot** | No | No | No |
+| **CLI Tools** | **50+ commands** | Limited | Via OctoBot | Basic |
+| **AI Trading Modes** | **3 (disabled/shadow/live)** | Live only | N/A | N/A |
+| **Approval Workflow** | **Yes - Human-in-loop** | No | No | No |
+| **Audit Logging** | **Full AI action logs** | Basic | Basic | None |
+| Shadow Mode | Yes | No | Yes | No |
 | License | MIT | MIT | GPL-3.0 | MIT |
+
+### Why PolyBot for AI-Assisted Trading?
+
+PolyBot is the only prediction market trading system with **native AI agent support**:
+
+- **MCP Server**: AI agents (Claude, GPT, etc.) can query markets, analyze strategies, and execute trades via the Model Context Protocol
+- **Claude Code Skill**: Run `polybot` commands directly in Claude Code with `/polybot strategy list`
+- **Strategy Assessment**: AI can analyze your strategy performance and suggest code improvements
+- **Safety First**: Three trading modes (disabled/shadow/live), approval workflows, position limits, and full audit logging
+- **50+ CLI Commands**: Complete system control from the command line, all accessible to AI agents
 
 ## Contributing
 
