@@ -5,12 +5,14 @@ to query state data without directly connecting to the database.
 All queries are routed through the state service via IPC.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from polybot.config import get_settings
 from polybot.core.nng import NNGRequester
+from polybot.db.sqlite_store import SQLiteStore
 from polybot.models.market import Market
 from polybot.models.order import Order, OrderSide, OrderStatus, OrderType
 from polybot.models.position import Position, PositionStatus
@@ -31,48 +33,66 @@ class StateClient:
         """Initialize the client."""
         self._settings = get_settings()
         self._requester: Optional[NNGRequester] = None
+        self._store: Optional[SQLiteStore] = None
         self._connected = False
+        self._use_local_store = False
 
     async def connect(self) -> None:
-        """Connect to the state service."""
+        """Initialize the state client without assuming the state service is available."""
         if self._connected:
             return
 
+        self._use_local_store = False
         self._requester = NNGRequester(self._settings.nng.state_address)
-        await self._requester.open()
-        self._connected = True
-        logger.info("State client connected")
+
+        try:
+            await self._requester.open()
+            self._connected = True
+            logger.info("State client connected")
+        except Exception as exc:
+            logger.warning(
+                "NNG state service unavailable at %s (%s). Falling back to local SQLite store.",
+                self._settings.nng.state_address,
+                exc,
+            )
+            self._requester = None
+            self._store = SQLiteStore()
+            await self._store.connect()
+            self._use_local_store = True
+            self._connected = True
+            logger.info("State client connected via local SQLite store")
 
     async def close(self) -> None:
         """Close the connection."""
         if self._requester:
             await self._requester.close()
             self._requester = None
-            self._connected = False
+
+        if self._store:
+            await self._store.close()
+            self._store = None
+
+        self._connected = False
+        self._use_local_store = False
 
     async def _query(self, query_type: str, params: Dict[str, Any]) -> Any:
-        """Execute a query against the state service.
-
-        Args:
-            query_type: Type of query to execute
-            params: Query parameters
-
-        Returns:
-            Query result
-
-        Raises:
-            RuntimeError: If not connected or query fails
-        """
-        if not self._connected or not self._requester:
+        """Execute a query against the state service or the local SQLite store."""
+        if not self._connected:
             await self.connect()
+
+        if self._use_local_store and self._store:
+            return await self._query_local(query_type, params)
 
         request = {
             "query_type": query_type,
             "params": params,
         }
 
+        if not self._requester:
+            await self.connect()
+
         try:
-            response = await self._requester.request(request)
+            response = await asyncio.wait_for(self._requester.request(request), timeout=1.0)
 
             if not response.get("success"):
                 error = response.get("error", "Unknown error")
@@ -80,9 +100,109 @@ class StateClient:
 
             return response.get("data")
 
-        except Exception as e:
-            logger.error(f"State query error: {e}")
+        except Exception as exc:
+            if not self._use_local_store:
+                logger.warning(
+                    "NNG state request failed (%s). Falling back to local SQLite store.",
+                    exc,
+                )
+                self._requester = None
+                self._store = SQLiteStore()
+                await self._store.connect()
+                self._use_local_store = True
+                return await self._query_local(query_type, params)
+
+            logger.error(f"State query error: {exc}")
             raise
+
+    async def _query_local(self, query_type: str, params: Dict[str, Any]) -> Any:
+        """Execute a query against the local SQLite store."""
+        if not self._store:
+            raise RuntimeError("Local SQLite store not available")
+
+        if query_type == "get_market":
+            market = await self._store.get_market(params.get("market_id", ""))
+            return self._market_to_dict(market) if market else None
+
+        if query_type == "get_active_markets":
+            markets = await self._store.get_active_markets(limit=params.get("limit", 100))
+            return [self._market_to_dict(market) for market in markets]
+
+        if query_type == "save_market":
+            await self._store.save_market(self._dict_to_market(params.get("market", {})))
+            return True
+
+        if query_type == "get_order":
+            order = await self._store.get_order(params.get("order_id", ""))
+            return self._order_to_dict(order) if order else None
+
+        if query_type == "get_orders":
+            orders = await self._store.get_orders(
+                strategy=params.get("strategy"),
+                status=params.get("status"),
+                limit=params.get("limit", 100),
+            )
+            return [self._order_to_dict(order) for order in orders]
+
+        if query_type == "get_open_orders":
+            orders = await self._store.get_open_orders(strategy=params.get("strategy"))
+            return [self._order_to_dict(order) for order in orders]
+
+        if query_type == "save_order":
+            await self._store.save_order(self._dict_to_order(params.get("order", {})))
+            return True
+
+        if query_type == "get_position":
+            position = await self._store.get_position(params.get("position_id", 0))
+            return self._position_to_dict(position) if position else None
+
+        if query_type == "get_positions":
+            positions = await self._store.get_positions(
+                strategy=params.get("strategy"),
+                status=params.get("status"),
+                limit=params.get("limit", 100),
+            )
+            return [self._position_to_dict(position) for position in positions]
+
+        if query_type == "get_open_positions":
+            positions = await self._store.get_open_positions(strategy=params.get("strategy"))
+            return [self._position_to_dict(position) for position in positions]
+
+        if query_type == "save_position":
+            return await self._store.save_position(self._dict_to_position(params.get("position", {})))
+
+        if query_type == "close_position":
+            position = await self._store.close_position(
+                position_id=params.get("position_id", 0),
+                exit_price=params.get("exit_price", 0),
+            )
+            return self._position_to_dict(position) if position else None
+
+        if query_type == "get_trades":
+            trades = await self._store.get_trades(
+                strategy=params.get("strategy"),
+                market_id=params.get("market_id"),
+                limit=params.get("limit", 100),
+            )
+            return [self._trade_to_dict(trade) for trade in trades]
+
+        if query_type == "save_trade":
+            await self._store.save_trade(self._dict_to_trade(params.get("trade", {})))
+            return True
+
+        if query_type == "get_strategy_config":
+            return await self._store.get_strategy_config(params.get("name", ""))
+
+        if query_type == "save_strategy_config":
+            await self._store.save_strategy_config(
+                name=params.get("name", ""),
+                enabled=params.get("enabled", False),
+                config=params.get("config", {}),
+                shadow=params.get("shadow", False),
+            )
+            return True
+
+        raise ValueError(f"Unknown query type: {query_type}")
 
     # =========================================================================
     # Markets

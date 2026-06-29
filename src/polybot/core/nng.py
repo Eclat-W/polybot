@@ -9,6 +9,7 @@ import logging
 import os
 import stat
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Generic, Optional, TypeVar
@@ -74,6 +75,19 @@ def serialize(msg: Dict[str, Any]) -> bytes:
     return msgpack.packb(msg, use_bin_type=True, default=_default_encoder)
 
 
+@contextmanager
+def _suppress_nng_connection_noise() -> Any:
+    """Temporarily silence pynng's noisy connection-refused logging."""
+    pynng_logger = logging.getLogger("pynng")
+    previous_disabled = pynng_logger.disabled
+    pynng_logger.disabled = True
+
+    try:
+        yield
+    finally:
+        pynng_logger.disabled = previous_disabled
+
+
 def deserialize(data: bytes) -> Dict[str, Any]:
     """Deserialize bytes to a message using msgpack."""
     return msgpack.unpackb(data, raw=False, object_hook=_default_decoder)
@@ -94,8 +108,11 @@ class NNGSocket(ABC):
     async def open(self) -> None:
         """Open the socket connection."""
         ensure_ipc_directory()
-        self._socket = self._create_socket()
+        with _suppress_nng_connection_noise():
+            self._socket = self._create_socket()
         self._socket.recv_timeout = get_settings().nng.recv_timeout_ms
+        if hasattr(self._socket, "send_timeout"):
+            self._socket.send_timeout = get_settings().nng.recv_timeout_ms
 
     async def close(self) -> None:
         """Close the socket connection."""
@@ -162,7 +179,7 @@ class NNGSubscriber(NNGSocket):
     def _create_socket(self) -> pynng.Socket:
         sock = pynng.Sub0()
         sock.subscribe(self._topic)
-        sock.dial(self._address)
+        sock.dial(self._address, block=False)
         logger.info(f"Subscriber connected to {self._address}")
         return sock
 
@@ -214,7 +231,7 @@ class NNGRequester(NNGSocket):
 
     def _create_socket(self) -> pynng.Socket:
         sock = pynng.Req0()
-        sock.dial(self._address)
+        sock.dial(self._address, block=False)
         logger.info(f"Requester connected to {self._address}")
         return sock
 
@@ -310,7 +327,7 @@ class NNGPusher(NNGSocket):
 
     def _create_socket(self) -> pynng.Socket:
         sock = pynng.Push0()
-        sock.dial(self._address)
+        sock.dial(self._address, block=False)
         logger.info(f"Pusher connected to {self._address}")
         return sock
 
